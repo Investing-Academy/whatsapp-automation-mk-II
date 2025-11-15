@@ -1,4 +1,5 @@
 .venv
+venv
 whatsapp_session
 sheets-api-cred.json
 __pycache__
