@@ -123,14 +123,12 @@ def open_whatsapp():
             try:
                 # Extract metadata 
                 meta = msg.get_attribute("data-pre-plain-text")
-                # Example: "[20:15, 25/08/2025] +972 50-123-4567: "
                 if meta:
                     meta = meta.strip("[]")
                     timestamp, sender = meta.split("] ")[0], meta.split("] ")[1].replace(":", "")
                 else:
                     timestamp, sender = "?", "?"
 
-                # Extract message text (descendant spans)
                 text_elems = msg.find_elements(By.CSS_SELECTOR, 'span.selectable-text span')
                 text = " ".join([t.text for t in text_elems]) if text_elems else ""
 
