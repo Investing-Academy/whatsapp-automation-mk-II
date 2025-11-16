@@ -9,7 +9,7 @@ from selenium.common.exceptions import TimeoutException
 import time
 from dotenv import load_dotenv
 import os
-import json
+from filter_messages import main
 
 def open_whatsapp():
     chrome_options = Options()
@@ -32,10 +32,9 @@ def open_whatsapp():
                 (By.CSS_SELECTOR, '#side [role="textbox"][contenteditable="true"]')
             ))
             print("Already logged in! Session restored successfully.")
-            time.sleep(2)  # Short wait since we're already logged in
+            time.sleep(2)  
         except TimeoutException:
             print("Please scan QR code to login...")
-            # Wait longer for first-time QR scan
             time.sleep(15)
         
         print("WhatsApp Web loaded successfully!")
@@ -123,12 +122,14 @@ def open_whatsapp():
             try:
                 # Extract metadata 
                 meta = msg.get_attribute("data-pre-plain-text")
+                # Example: "[20:15, 25/08/2025] +972 50-123-4567: "
                 if meta:
                     meta = meta.strip("[]")
                     timestamp, sender = meta.split("] ")[0], meta.split("] ")[1].replace(":", "")
                 else:
                     timestamp, sender = "?", "?"
 
+                # Extract message text (descendant spans)
                 text_elems = msg.find_elements(By.CSS_SELECTOR, 'span.selectable-text span')
                 text = " ".join([t.text for t in text_elems]) if text_elems else ""
 
@@ -152,4 +153,3 @@ def open_whatsapp():
         driver.quit()
 
 if __name__ == "__main__":
-    open_whatsapp()
