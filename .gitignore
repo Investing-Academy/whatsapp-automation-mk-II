@@ -1,7 +1,7 @@
 .venv
 venv
 whatsapp_session
-sheets-api-cred.json
+secrets
 __pycache__
 .env
 stuf
