@@ -8,7 +8,7 @@ load_dotenv()
 
 # Google Sheets configuration
 sheet_id = os.getenv("SHEET_ID")
-CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "secrets/sheets-api-cred.json")
+credentials_file = os.getenv("CREDENTIALS_FILE")
 
 
 def init_google_sheets():
@@ -18,14 +18,8 @@ def init_google_sheets():
         'https://www.googleapis.com/auth/drive.readonly'
     ]
     
-    try:
-        # Check if credentials file exists
-        if not os.path.exists(CREDENTIALS_FILE):
-            print(f"❌ Credentials file not found at: {CREDENTIALS_FILE}")
-            print(f"📁 Current working directory: {os.getcwd()}")
-            print(f"🔍 Looking for file at: {os.path.abspath(CREDENTIALS_FILE)}")
-            
-        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
+    try:            
+        creds = Credentials.from_service_account_file(credentials_file, scopes=scopes)
         client = gspread.authorize(creds)
         print(f"✅ Successfully connected to Google Sheets")
         return client
