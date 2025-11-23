@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from pymongo import MongoClient, ASCENDING
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+from src.etl.db.mongodb.mongo_finder import get_mongo_host, build_mongo_uri, list_mongo_containers
 
 # Load environment variables
 load_dotenv()
@@ -113,10 +114,10 @@ class MongoDBConnection:
             # Index on name for searching
             collection.create_index([("name", ASCENDING)], name="name_idx")
             
-            print(f"  ✓ Created indexes for {collection_name}")
+            print(f"Created indexes for {collection_name}")
             
         except Exception as e:
-            print(f"  ⚠️ Could not create indexes for {collection_name}: {e}")
+            print(f"Could not create indexes for {collection_name}: {e}")
     
     def get_database(self):
         """Get MongoDB database instance"""
@@ -169,7 +170,7 @@ class MongoDBConnection:
             self._client.close()
             self._client = None
             self._db = None
-            print("\n🔌 Closed MongoDB connection")
+            print("Closed MongoDB connection")
     
     def __enter__(self):
         """Context manager entry"""
