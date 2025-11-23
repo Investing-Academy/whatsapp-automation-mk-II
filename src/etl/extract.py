@@ -151,6 +151,3 @@ def open_whatsapp():
 
     finally:
         driver.quit()
-
-if __name__ == "__main__":
-    msgs = open_whatsapp()
