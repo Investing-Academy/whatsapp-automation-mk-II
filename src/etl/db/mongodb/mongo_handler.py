@@ -43,7 +43,7 @@ class MongoDBConnection:
         mongo_uri = build_mongo_uri(self._host)
         
         try:
-            print(f"\nAttempting to connect to MongoDB...")
+            print(f"Attempting to connect to MongoDB...")
             print(f"   Host: {self._host}:{MONGO_PORT}")
             print(f"   Database: {MONGO_DB_NAME}")
             
@@ -83,7 +83,7 @@ class MongoDBConnection:
             # Get collection references
             messages_collection = self._db[COLLECTION_NAME]
             
-            print(f"\nSetting up collections...")
+            print(f"Setting up collections...")
             
             # Create indexes for messages collection
             self._create_indexes(messages_collection, COLLECTION_NAME)
@@ -155,7 +155,7 @@ class MongoDBConnection:
         """List all collections in the database"""
         try:
             collections = self._db.list_collection_names()
-            print(f"\nCollections in {MONGO_DB_NAME}:")
+            print(f"Collections in {MONGO_DB_NAME}:")
             for col in collections:
                 count = self._db[col].count_documents({})
                 print(f"   - {col}: {count} documents")

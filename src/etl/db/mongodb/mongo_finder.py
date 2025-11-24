@@ -98,7 +98,7 @@ def list_mongo_containers():
                         })
             
             if containers:
-                print(f"\nFound {len(containers)} MongoDB container(s):")
+                print(f"Found {len(containers)} MongoDB container(s):")
                 for c in containers:
                     print(f"   - {c['name']} (ID: {c['id'][:12]}, Image: {c['image']})")
             
