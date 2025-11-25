@@ -144,10 +144,6 @@ def read_messages(driver, message_count):
     return data
 
 
-
-# ================================================================
-# 🔥 MAIN RUNNER — one WhatsApp session, read 2 groups
-# ================================================================
 def run_multi_group_reader():
     load_dotenv()
 
