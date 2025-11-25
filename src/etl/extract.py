@@ -149,7 +149,7 @@ def run_multi_group_reader():
 
     STUDENTS = os.getenv("STUDENTS_GROUP")
     SALES = os.getenv("SALES_TEAM_GROUP")
-    MESSAGE_COUNT = int(os.getenv("MESSAGE_COUNT", "20"))
+    MESSAGE_COUNT = int(os.getenv("MESSAGE_COUNT"))
 
     driver, wait = open_whatsapp_browser()
 
