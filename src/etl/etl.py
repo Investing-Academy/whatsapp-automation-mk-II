@@ -1,25 +1,33 @@
-from src.etl.extract import open_whatsapp
+from src.etl.extract import run_multi_group_reader
 from src.etl.transform import process_messages
 from src.etl.db.mongodb.message_saver import MessageSaver
 from src.etl.sheets_updater import update_sheets_from_mongo
+from src.etl.sales_etl.etl import run_sales_etl
 
 def run_etl():
-    # Extract
-    messages = open_whatsapp()
-    if messages == 0:
+    # Extract both groups
+    extract_result = run_multi_group_reader()
+    students_messages = extract_result["students"]
+    sales_messages = extract_result["sales"]
+    
+    run_sales_etl(sales_messages)
+
+    ##run sales etl
+    
+    if len(students_messages) == 0:
         print("========================")
         print("failed to read messages")
         print("========================")
         return
     
     # Transform
-    messages = process_messages(messages)
-    print(f"Processed {len(messages)} messages")
+    students_messages = process_messages(students_messages)
+    print(f"Processed {len(students_messages)} messages")
     
     # Load (with deduplication)
     try:
         saver = MessageSaver()
-        results = saver.save_messages_batch(messages)
+        results = saver.save_messages_batch(students_messages)
         
         # Print results
         print("=" * 60)
@@ -37,7 +45,7 @@ def run_etl():
             sheets_results = update_sheets_from_mongo()
             
             if sheets_results:
-                print(f"{len(messages)} messages scaned")
+                print(f"{len(students_messages)} messages scanned")
                 print(f"✓ Sheets updated: {sheets_results['updates_needed']} students")
         else:
             print("⊘ No new messages - skipping Sheets update")
