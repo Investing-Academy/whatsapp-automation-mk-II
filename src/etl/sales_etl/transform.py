@@ -77,10 +77,10 @@ def get_last_run_timestamp():
             if isinstance(last_timestamp, str):
                 last_timestamp = parse_whatsapp_timestamp(last_timestamp)
             
-            print(f"📅 Last run timestamp: {last_timestamp}")
+            print(f"Last run timestamp: {last_timestamp}")
             return last_timestamp
         else:
-            print(f"📅 No previous run found - processing all messages")
+            print(f"No previous run found - processing all messages")
             return None
             
     except Exception as e:
