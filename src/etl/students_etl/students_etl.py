@@ -1,6 +1,6 @@
 from src.etl.transform import process_messages
 from src.etl.db.mongodb.message_saver import MessageSaver
-from src.etl.students_etl.sheets_updater import update_sheets_from_mongo
+from src.etl.students_etl.students_load import update_sheets_from_mongo
 
 def run_students_etl(students_messages):
     # Transform
