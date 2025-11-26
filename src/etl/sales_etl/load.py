@@ -1,5 +1,4 @@
 import os
-from src.etl.sales_etl.transform import format_leads_for_sheets
 from src.sheets_connect import init_google_sheets
 from dotenv import load_dotenv
 
@@ -22,11 +21,15 @@ def find_next_empty_row(sheet, column='B'):
     return next_row
 
 
-def upload_leads_to_sheets(leads):
+def upload_leads_to_sheets(formatted_leads):
     """
-    Upload leads to Google Sheets starting from the next available row.
+    Upload formatted leads to Google Sheets starting from the next available row.
+    
+    Args:
+        formatted_leads: List of lists, where each inner list represents a row
+                        Format: [timestamp, name, phone, email, source]
     """
-    if not leads:
+    if not formatted_leads:
         print("No leads to upload.")
         return {"success": 0, "errors": []}
     
@@ -34,9 +37,6 @@ def upload_leads_to_sheets(leads):
 
     # Find starting row
     start_row = find_next_empty_row(sheet)
-    
-    # Format all leads for upload
-    formatted_leads = [format_leads_for_sheets(lead) for lead in leads]
     
     # Prepare the range (B:F for columns B through F)
     end_row = start_row + len(formatted_leads) - 1
@@ -81,4 +81,4 @@ def get_sales_worksheet():
     worksheet = spreadsheet.worksheet("main")
     
     print(f"✓ Connected to sales spreadsheet")
-    return worksheet   
+    return worksheet
