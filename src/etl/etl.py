@@ -10,29 +10,35 @@ def run_etl():
     students_messages = extract_result["students"]
     sales_messages = extract_result["sales"]
     
-    run_sales_etl(sales_messages)
+    
 
-    ##run sales etl
+
     
     if len(students_messages) == 0:
-        print("========================")
-        print("failed to read messages")
-        print("========================")
+        print("=" * 60 +"\n" + "failed to read students messages" + "=" * 60 +"\n")
         return
-    
+    else:
+        run_students_etl(students_messages)
+
+    if len(sales_messages) == 0:
+        print("=" * 60 +"\n" + "failed to read sales messages" + "=" * 60 +"\n")
+        return
+    else:
+        run_sales_etl(sales_messages)
+
+
+def run_students_etl(students_messages):
     # Transform
     students_messages = process_messages(students_messages)
     print(f"Processed {len(students_messages)} messages")
-    
+
     # Load (with deduplication)
     try:
         saver = MessageSaver()
         results = saver.save_messages_batch(students_messages)
         
         # Print results
-        print("=" * 60)
-        print("DATABASE SAVE RESULTS")
-        print("=" * 60)
+        print("=" * 60 +"\n" + "DATABASE SAVE RESULTS" + "=" * 60 +"\n")
         print(f"Total processed:     {results['total']}")
         print(f"✓ New messages:      {results['inserted']}")
         print(f"⊘ Duplicates skipped: {results['skipped']}")
