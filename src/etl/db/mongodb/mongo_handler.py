@@ -16,18 +16,24 @@ MONGO_PASSWORD = os.getenv("MONGO_PASSWORD")
 
 # Students database configuration
 STUDENTS_DB = os.getenv("STUDENTS_DB")
-STUDENTS_MESSAGES_COLLECTION = os.getenv("STUDENTS_MESSAGES_COLLECTION")
+STUDENTS_STATS = os.getenv("STUDENTS_STATS")
 
 # Sales database configuration
 SALES_DB = os.getenv("SALES_DB")
 SALES_LAST_RUN_COLLECTION = os.getenv("SALES_LAST_RUN_COLLECTION")
 
+# Logger database configuration
+LOGGER_DB = os.getenv("LOGGER_DB")
+LOGGER_STATS = os.getenv("LOGGER_STATS")
+
 # Validate required environment variables
 required_vars = {
     "STUDENTS_DB": STUDENTS_DB,
-    "STUDENTS_MESSAGES_COLLECTION": STUDENTS_MESSAGES_COLLECTION,
+    "STUDENTS_STATS": STUDENTS_STATS,
     "SALES_DB": SALES_DB,
-    "SALES_LAST_RUN_COLLECTION": SALES_LAST_RUN_COLLECTION
+    "SALES_LAST_RUN_COLLECTION": SALES_LAST_RUN_COLLECTION,
+    "LOGGER_DB": LOGGER_DB,
+    "LOGGER_STATS": LOGGER_STATS
 }
 
 missing_vars = [var for var, value in required_vars.items() if not value]
@@ -41,9 +47,11 @@ The following required environment variables are not set:
 
 Please check your .env file and ensure it contains:
   STUDENTS_DB=students_db
-  STUDENTS_MESSAGES_COLLECTION=messages
+  STUDENTS_STATS=student_stats
   SALES_DB=sales_db
   SALES_LAST_RUN_COLLECTION=last_run_timestamp
+  LOGGER_DB=logger_db
+  LOGGER_STATS=logger_stats
 
 Current .env location: {os.path.abspath('.env')}
 {'='*60}
@@ -57,6 +65,7 @@ class MongoDBConnection:
     _client = None
     _students_db = None
     _sales_db = None
+    _logger_db = None
     _host = None
     
     def __new__(cls):
@@ -81,6 +90,7 @@ class MongoDBConnection:
             print(f"   Host: {self._host}:{MONGO_PORT}")
             print(f"   Students Database: {STUDENTS_DB}")
             print(f"   Sales Database: {SALES_DB}")
+            print(f"   Logger Database: {LOGGER_DB}")
             
             # Create client with timeout settings
             self._client = MongoClient(
@@ -94,10 +104,11 @@ class MongoDBConnection:
             self._client.admin.command('ping')
             print(f"✓ Successfully connected to MongoDB!")
             
-            # Setup both databases
+            # Setup all databases
             self._students_db = self._client[STUDENTS_DB]
             self._sales_db = self._client[SALES_DB]
-            print(f"✓ Using databases: {STUDENTS_DB}, {SALES_DB}")
+            self._logger_db = self._client[LOGGER_DB]
+            print(f"✓ Using databases: {STUDENTS_DB}, {SALES_DB}, {LOGGER_DB}")
             
             # Setup collections and indexes
             self._setup_collections()
@@ -115,54 +126,60 @@ class MongoDBConnection:
             raise
     
     def _setup_collections(self):
-        """Setup collections and create indexes"""
+        """
+        Setup collections and create indexes
+        Only creates these specific collections:
+        - students_db.student_stats
+        - sales_db.last_run_timestamp
+        - logger_db.logger_stats
+        """
         try:
-            # Get collection references from different databases
-            students_messages_collection = self._students_db[STUDENTS_MESSAGES_COLLECTION]
-            sales_last_run_collection = self._sales_db[SALES_LAST_RUN_COLLECTION]
-            
             print(f"Setting up collections...")
             
-            # Create indexes for students/messages collection
-            self._create_indexes(students_messages_collection, STUDENTS_MESSAGES_COLLECTION, "students")
+            # Get collection references (exact names from .env)
+            students_stats_collection = self._students_db[STUDENTS_STATS]
+            sales_last_run_collection = self._sales_db[SALES_LAST_RUN_COLLECTION]
+            logger_stats_collection = self._logger_db[LOGGER_STATS]
             
-            # Create indexes for sales last run collection
+            # Create indexes for student_stats collection
+            self._create_student_stats_indexes(students_stats_collection, STUDENTS_STATS)
+            
+            # Create indexes for sales last_run_timestamp collection
             self._create_last_run_indexes(sales_last_run_collection, SALES_LAST_RUN_COLLECTION)
+            
+            # Create indexes for logger_stats collection
+            self._create_logger_stats_indexes(logger_stats_collection, LOGGER_STATS)
             
             print(f"✓ Collections and indexes setup complete")
             
         except Exception as e:
             print(f"Warning: Could not setup collections: {e}")
     
-    def _create_indexes(self, collection, collection_name, collection_type="general"):
-        """Create indexes for a collection"""
+    def _create_student_stats_indexes(self, collection, collection_name):
+        """Create indexes for student_stats collection"""
         try:
             # Index on phone_number for fast lookups
             collection.create_index([("phone_number", ASCENDING)], name="phone_number_idx")
             
-            # Index on timestamp for sorting
-            collection.create_index([("timestamp", ASCENDING)], name="timestamp_idx")
+            # Index on uniq_id (unique identifier)
+            collection.create_index([("uniq_id", ASCENDING)], unique=True, name="uniq_id_idx")
             
-            # Compound index for phone + timestamp
-            collection.create_index([
-                ("phone_number", ASCENDING),
-                ("timestamp", ASCENDING)
-            ], name="phone_timestamp_idx")
+            # Index on current_lesson for filtering
+            collection.create_index([("current_lesson", ASCENDING)], name="current_lesson_idx")
             
-            # Index on lesson for filtering (if students collection)
-            if collection_type == "students":
-                collection.create_index([("lesson", ASCENDING)], name="lesson_idx")
+            # Index on updated_at for sorting
+            collection.create_index([("updated_at", ASCENDING)], name="updated_at_idx")
             
             # Index on name for searching
             collection.create_index([("name", ASCENDING)], name="name_idx")
             
-            print(f"   ✓ Created indexes for {collection_name} ({collection_type})")
+            print(f"   ✓ Created indexes for {collection_name} (student statistics)")
             
         except Exception as e:
             print(f"   ⚠ Could not create indexes for {collection_name}: {e}")
     
     def _create_last_run_indexes(self, collection, collection_name):
-        """Create indexes for last run timestamp collection"""
+        """Create indexes for last_run_timestamp collection"""
         try:
             # Index on identifier (job name or process name)
             collection.create_index([("identifier", ASCENDING)], name="identifier_idx", unique=True)
@@ -171,6 +188,35 @@ class MongoDBConnection:
             collection.create_index([("last_run_timestamp", ASCENDING)], name="last_run_timestamp_idx")
             
             print(f"   ✓ Created indexes for {collection_name} (tracking)")
+            
+        except Exception as e:
+            print(f"   ⚠ Could not create indexes for {collection_name}: {e}")
+    
+    def _create_logger_stats_indexes(self, collection, collection_name):
+        """Create indexes for logger_stats collection"""
+        try:
+            # Index on timestamp for chronological queries
+            collection.create_index([("timestamp", ASCENDING)], name="timestamp_idx")
+            
+            # Index on log_level for filtering (info, warning, error, etc.)
+            collection.create_index([("log_level", ASCENDING)], name="log_level_idx")
+            
+            # Index on source/module for filtering by origin
+            collection.create_index([("source", ASCENDING)], name="source_idx")
+            
+            # Compound index for time-based queries by level
+            collection.create_index([
+                ("log_level", ASCENDING),
+                ("timestamp", ASCENDING)
+            ], name="level_timestamp_idx")
+            
+            # Compound index for source + timestamp queries
+            collection.create_index([
+                ("source", ASCENDING),
+                ("timestamp", ASCENDING)
+            ], name="source_timestamp_idx")
+            
+            print(f"   ✓ Created indexes for {collection_name} (logger statistics)")
             
         except Exception as e:
             print(f"   ⚠ Could not create indexes for {collection_name}: {e}")
@@ -187,26 +233,34 @@ class MongoDBConnection:
             self._connect()
         return self._sales_db
     
+    def get_logger_database(self):
+        """Get Logger MongoDB database instance"""
+        if self._logger_db is None:
+            self._connect()
+        return self._logger_db
+    
     def get_collection(self, database_name, collection_name):
         """Get a specific collection from a database"""
         if database_name == "students":
             return self.get_students_database()[collection_name]
         elif database_name == "sales":
             return self.get_sales_database()[collection_name]
+        elif database_name == "logger":
+            return self.get_logger_database()[collection_name]
         else:
             raise ValueError(f"Unknown database: {database_name}")
     
-    def get_students_messages_collection(self):
-        """Get students/messages collection"""
-        return self.get_students_database()[STUDENTS_MESSAGES_COLLECTION]
-    
-    def get_messages_collection(self):
-        """Get students/messages collection (alias for backward compatibility)"""
-        return self.get_students_messages_collection()
+    def get_students_stats_collection(self):
+        """Get student_stats collection from students_db"""
+        return self.get_students_database()[STUDENTS_STATS]
     
     def get_sales_last_run_collection(self):
-        """Get sales last run timestamp collection"""
+        """Get last_run_timestamp collection from sales_db"""
         return self.get_sales_database()[SALES_LAST_RUN_COLLECTION]
+    
+    def get_logger_stats_collection(self):
+        """Get logger_stats collection from logger_db"""
+        return self.get_logger_database()[LOGGER_STATS]
     
     def test_connection(self):
         """Test if connection is alive"""
@@ -222,14 +276,16 @@ class MongoDBConnection:
             "host": self._host,
             "port": MONGO_PORT,
             "students_database": STUDENTS_DB,
-            "students_messages_collection": STUDENTS_MESSAGES_COLLECTION,
+            "students_stats_collection": STUDENTS_STATS,
             "sales_database": SALES_DB,
             "sales_last_run_collection": SALES_LAST_RUN_COLLECTION,
+            "logger_database": LOGGER_DB,
+            "logger_stats_collection": LOGGER_STATS,
             "is_connected": self.test_connection()
         }
     
     def list_collections(self):
-        """List all collections in both databases"""
+        """List all collections in all databases"""
         try:
             print(f"\n📚 Collections in {STUDENTS_DB}:")
             students_collections = self._students_db.list_collection_names()
@@ -243,9 +299,16 @@ class MongoDBConnection:
                 count = self._sales_db[col].count_documents({})
                 print(f"   - {col}: {count} documents")
             
+            print(f"\n📝 Collections in {LOGGER_DB}:")
+            logger_collections = self._logger_db.list_collection_names()
+            for col in logger_collections:
+                count = self._logger_db[col].count_documents({})
+                print(f"   - {col}: {count} documents")
+            
             return {
                 "students_db": students_collections,
-                "sales_db": sales_collections
+                "sales_db": sales_collections,
+                "logger_db": logger_collections
             }
         except Exception as e:
             print(f"Error listing collections: {e}")
@@ -258,6 +321,7 @@ class MongoDBConnection:
             self._client = None
             self._students_db = None
             self._sales_db = None
+            self._logger_db = None
             print("Closed MongoDB connection")
     
     def __enter__(self):
