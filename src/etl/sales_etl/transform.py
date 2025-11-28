@@ -139,7 +139,7 @@ def filter_new_messages(messages, last_run_timestamp):
         if msg_timestamp and msg_timestamp > last_run_timestamp:
             new_messages.append(msg)
     
-    print(f"🔍 Filtered messages: {len(messages)} total → {len(new_messages)} new")
+    print(f"Filtered messages: {len(messages)} total → {len(new_messages)} new")
     
     return new_messages
 
