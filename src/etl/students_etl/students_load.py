@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 from dotenv import load_dotenv
 from src.sheets_connect import init_google_sheets
 from src.etl.db.mongodb.message_saver import MessageSaver
-from src.etl.transform import clean_phone_number
+from src.etl.students_etl.transform import clean_phone_number
 
 load_dotenv()
 
@@ -99,38 +99,32 @@ class SheetsUpdater:
     
     def get_latest_practice_dates_from_mongo(self) -> Dict[str, datetime]:
         """
-        Get latest practice date per phone number from MongoDB
+        Get latest practice date per phone number from MongoDB (using student stats)
         """
         saver = MessageSaver()
-        collection = saver.collection
+        stats_collection = saver.stats_collection
         
-        # Aggregation pipeline to get latest practice date per phone
-        pipeline = [
-            {
-                '$match': {
-                    'message_category': 'practice'
-                }
-            },
-            {
-                '$group': {
-                    '_id': '$phone_number',
-                    'latest_timestamp': {'$max': '$timestamp'}
-                }
-            }
-        ]
+        phone_to_date: Dict[str, datetime] = {}
+        cursor = stats_collection.find({}, {'phone_number': 1, 'lessons': 1})
         
-        results = list(collection.aggregate(pipeline))
-        
-        phone_to_date = {}
-        
-        for result in results:
-            phone = result['_id']
-            timestamp_str = result['latest_timestamp']
+        for doc in cursor:
+            phone = doc.get('phone_number')
+            if not phone:
+                continue
             
-            # Parse timestamp
-            timestamp = self.parse_date(timestamp_str)
-            if timestamp:
-                phone_to_date[phone] = timestamp
+            latest_date: Optional[datetime] = None
+            for lesson in doc.get('lessons', []):
+                last_practice = lesson.get('last_practice')
+                if isinstance(last_practice, datetime):
+                    candidate = last_practice
+                else:
+                    candidate = self.parse_date(last_practice) if last_practice else None
+                
+                if candidate and (not latest_date or candidate > latest_date):
+                    latest_date = candidate
+            
+            if latest_date:
+                phone_to_date[phone] = latest_date
         
         print(f"✓ Found latest practice dates for {len(phone_to_date)} students in MongoDB")
         return phone_to_date
@@ -139,9 +133,6 @@ class SheetsUpdater:
         """
         Update Google Sheets column D (last practice) with latest dates from MongoDB
         """
-        print("=" * 60)
-        print("Updating Google Sheets Dashboard (MongoDB is Master)")
-        print("=" * 60)
         
         # Get current dates from sheets
         current_data = self.get_current_dates_from_sheets()
@@ -188,7 +179,7 @@ class SheetsUpdater:
                     'new': new_date_str
                 })
                 
-                print(f"  📅 {sheet_data['name']} ({phone})")
+                print(f"     {sheet_data['name']} ({phone})")
                 print(f"     {sheet_data['practice'] or 'Empty'} → {new_date_str}")
             else:
                 stats['no_changes'] += 1
@@ -200,22 +191,21 @@ class SheetsUpdater:
             try:
                 # Use batch_update for efficiency (single API call)
                 self.worksheet.batch_update(batch_updates)
-                print(f"✓ Batch update successful! ({len(batch_updates)} cells updated)")
+                print(f"Batch update successful! ({len(batch_updates)} cells updated)")
             except Exception as e:
-                print(f"✗ Batch update failed: {e}")
+                print(f"Batch update failed: {e}")
                 raise
         
         elif not batch_updates:
-            print(f"✓ All dates are synchronized with MongoDB!")
+            print(f"All dates are synchronized with MongoDB!")
         
         # Print summary
         print("=" * 60)
         print("SUMMARY")
         print("=" * 60)
-        print(f"Total students checked: {stats['total_checked']}")
-        print(f"✓ Updates applied: {stats['updates_needed']}")
-        print(f"⊘ Already synced: {stats['no_changes']}")
-        print(f"⚠ Not in MongoDB: {stats['not_in_mongo']}")
+        print(f"Updates applied: {stats['updates_needed']}")
+        print(f"Already synced: {stats['no_changes']}")
+        print(f"Not in MongoDB: {stats['not_in_mongo']}")
         print("=" * 60)
         
         return stats
@@ -225,24 +215,30 @@ class SheetsUpdater:
         Get practice history for a specific student
         """
         saver = MessageSaver()
-        collection = saver.collection
-        
         cleaned_phone = clean_phone_number(phone)
+        stats = saver.stats_collection.find_one({'phone_number': cleaned_phone})
         
-        results = collection.find({
-            'phone_number': cleaned_phone,
-            'message_category': 'practice'
-        }).sort('timestamp', -1).limit(limit)
+        if not stats:
+            return []
         
         history = []
-        for record in results:
+        for lesson in stats.get('lessons', []):
             history.append({
-                'date': record.get('timestamp'),
-                'content': record.get('content', 'N/A')[:50] + '...',
-                'teacher': record.get('teacher', 'Unknown')
+                'date': lesson.get('last_practice'),
+                'content': f"Lesson {lesson.get('lesson')} · count {lesson.get('practice_count', 0)}",
+                'teacher': lesson.get('teacher', 'Unknown')
             })
         
-        return history
+        # Sort by date descending (best effort)
+        def sort_key(entry):
+            val = entry.get('date')
+            if isinstance(val, datetime):
+                return val
+            parsed = self.parse_date(val) if val else None
+            return parsed or datetime.min
+        
+        history.sort(key=sort_key, reverse=True)
+        return history[:limit]
     
     def print_update_preview(self, phone: str):
         """
