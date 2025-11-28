@@ -62,7 +62,7 @@ def open_group(driver, wait, group_name):
     # Select first result
     first_result = None
     try:
-        results = WebDriverWait(driver, 5).until(
+        results = WebDriverWait(driver, 0.5).until(
             EC.presence_of_all_elements_located(
                 (By.CSS_SELECTOR, 'div[data-testid="cell-frame-container"]')
             )
@@ -74,7 +74,7 @@ def open_group(driver, wait, group_name):
 
     if not first_result:
         try:
-            results = WebDriverWait(driver, 5).until(
+            results = WebDriverWait(driver, 0.5).until(
                 EC.presence_of_all_elements_located(
                     (By.XPATH, '//div[@role="listbox"]//div[@role="option"]')
                 )
@@ -93,7 +93,6 @@ def open_group(driver, wait, group_name):
         ActionChains(driver).send_keys(Keys.ARROW_DOWN).send_keys(Keys.ENTER).perform()
 
     print(f"Group opened: {group_name}")
-    time.sleep(1)
 
 
 
