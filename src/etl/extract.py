@@ -161,7 +161,7 @@ def run_multi_group_reader():
         open_group(driver, wait, SALES)
         sales_messages = read_messages(driver, MESSAGE_COUNT)
 
-        print("=== DONE ===")
+        print("=== Done Extracting Messages ===")
         return {
             "students": students_messages,
             "sales": sales_messages
@@ -169,6 +169,3 @@ def run_multi_group_reader():
 
     finally:
         driver.quit()
-
-if __name__ == "__main__":
-    run_multi_group_reader()
