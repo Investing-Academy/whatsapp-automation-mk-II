@@ -5,12 +5,6 @@ from src.etl.db.mongodb.mongo_handler import get_mongo_connection
 def parse_whatsapp_timestamp(timestamp_str):
     """
     Parse WhatsApp timestamp string to datetime object.
-    Handles formats like:
-    - "10:30"
-    - "10:30 AM"
-    - "2024-11-27 10:30"
-    - ISO format strings
-    
     Returns datetime object or None if parsing fails.
     """
     if not timestamp_str:
