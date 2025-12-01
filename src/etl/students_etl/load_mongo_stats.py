@@ -37,7 +37,6 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
     phone_number = first_msg['phone_number']
     name = first_msg['name']
     current_lesson = first_msg['lesson']
-    teacher = first_msg['teacher']
     uniq_id = generate_uniq_id(phone_number, name)
     
     # Fetch existing student document
@@ -158,7 +157,8 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
             '$set': set_operations,
             **({'$inc': inc_operations} if inc_operations else {})
         },
-        'upsert': True
+        'upsert': True,
+        'is_new': not existing_doc  # Track if this is a new document
     }
 
 
@@ -170,6 +170,8 @@ def load(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:
         print("No records to load")
         return {
             'students_processed': 0,
+            'new_students': 0,
+            'updated_students': 0,
             'messages_loaded': 0,
             'practices_loaded': 0,
             'errors': 0
@@ -191,6 +193,8 @@ def load(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Statistics
     stats = {
         'students_processed': 0,
+        'new_students': 0,
+        'updated_students': 0,
         'messages_loaded': 0,
         'practices_loaded': 0,
         'errors': 0
@@ -215,11 +219,19 @@ def load(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:
             
             # Update statistics
             stats['students_processed'] += 1
+            
+            # Track new vs updated based on upserted_id presence
+            if result.upserted_id or update_operation['is_new']:
+                stats['new_students'] += 1
+            else:
+                stats['updated_students'] += 1
+            
             stats['messages_loaded'] += message_count
             stats['practices_loaded'] += practice_count
             
             student_name = student_messages[0]['name']
-            print(f"✓ Loaded: {student_name} ({phone_number}) - {message_count} messages, {practice_count} practices")
+            status = "NEW" if (result.upserted_id or update_operation['is_new']) else "UPDATED"
+            print(f"✓ {status}: {student_name} ({phone_number}) - {message_count} messages, {practice_count} practices")
             
         except Exception as e:
             stats['errors'] += 1
@@ -230,6 +242,8 @@ def load(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:
     print(f"\n{'='*60}")
     print(f"Load complete:")
     print(f"  Students processed: {stats['students_processed']}")
+    print(f"  New students: {stats['new_students']}")
+    print(f"  Updated students: {stats['updated_students']}")
     print(f"  Messages loaded: {stats['messages_loaded']}")
     print(f"  Practices loaded: {stats['practices_loaded']}")
     print(f"  Errors: {stats['errors']}")
