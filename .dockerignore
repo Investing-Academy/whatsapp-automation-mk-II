@@ -2,7 +2,6 @@
 venv
 whatsapp_session
 __pycache__
-.env
 stuf
 js
 .pytest_cache
