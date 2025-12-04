@@ -8,13 +8,34 @@ from src.etl.db.mongodb.mongo_handler import get_mongo_connection
 
 def parse_timestamp(timestamp_str: str) -> datetime:
     """
-    Parse timestamp string in format 'HH:MM, DD.MM.YYYY' to datetime object.
+    Parse timestamp string in multiple formats to datetime object.
+    Supports:
+    - ISO 8601: '2025-12-02T16:15:42.998+00:00'
+    - Custom format: 'HH:MM, DD.MM.YYYY'
     """
     try:
-        return datetime.strptime(timestamp_str, '%H:%M, %d.%m.%Y')
+        # Try ISO 8601 format first
+        if 'T' in timestamp_str:
+            # Handle ISO format with timezone
+            return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+        else:
+            # Handle custom format
+            return datetime.strptime(timestamp_str, '%H:%M, %d.%m.%Y')
     except Exception as e:
         print(f"Error parsing timestamp '{timestamp_str}': {e}")
         raise
+
+
+def format_timestamp(dt: datetime) -> str:
+    """
+    Format datetime object to string in format 'HH:MM, DD.M.YYYY'
+    Note: Single digit months are not zero-padded (e.g., 19.6.2025 not 19.06.2025)
+    """
+    import platform
+    if platform.system() == 'Windows':
+        return dt.strftime('%H:%M, %#d.%#m.%Y')
+    else:
+        return dt.strftime('%H:%M, %-d.%-m.%Y')
 
 
 def generate_uniq_id(phone_number: str, name: str) -> str:
@@ -41,164 +62,178 @@ def aggregate_student_updates(transformed_records: List[Dict[str, Any]]) -> Dict
 
 def process_student_messages(student_messages: List[Dict[str, Any]], stats_collection) -> Dict[str, Any]:
     """
-    Process all messages for a single student and build the update operations.
+    Process all messages for a single student and build MongoDB update operations.
+    Clean, predictable, auto-advancing lessons, duplicate-safe.
     """
-    # Get student info from first message (all messages have same student info)
     first_msg = student_messages[0]
     phone_number = first_msg['phone_number']
     name = first_msg['name']
     current_lesson = first_msg['lesson']
     uniq_id = generate_uniq_id(phone_number, name)
-    
-    # Fetch existing student document
+
+    # Fetch existing student
     existing_doc = stats_collection.find_one({'uniq_id': uniq_id})
-    
-    # Initialize counters and tracking
+
+    existing_last_message = None
+    existing_last_practice = None
+
+    if existing_doc:
+        if existing_doc.get('last_message_timedate'):
+            val = existing_doc['last_message_timedate']
+            existing_last_message = parse_timestamp(val) if isinstance(val, str) else val
+
+        if existing_doc.get('last_practice_timedate'):
+            val = existing_doc['last_practice_timedate']
+            existing_last_practice = parse_timestamp(val) if isinstance(val, str) else val
+
+    # Load lessons into dict
+    lessons_dict = {}
+    if existing_doc and 'lessons' in existing_doc:
+        for lesson in existing_doc['lessons']:
+            if not isinstance(lesson, dict):
+                print(f"⚠ Corrupt lesson structure in DB for {name}, skipping: {lesson}")
+                continue
+
+            lesson_copy = lesson.copy()
+
+            if 'lesson' not in lesson_copy:
+                print(f"⚠ Lesson entry missing 'lesson' key for {name}, skipping: {lesson_copy}")
+                continue
+
+            # Parse timestamps
+            for key in ['first_practice', 'last_practice']:
+                if key in lesson_copy and isinstance(lesson_copy[key], str):
+                    try:
+                        lesson_copy[key] = parse_timestamp(lesson_copy[key])
+                    except:
+                        pass
+            
+            # Ensure practice_count is an integer
+            if 'practice_count' in lesson_copy:
+                try:
+                    lesson_copy['practice_count'] = int(lesson_copy['practice_count'])
+                except (ValueError, TypeError):
+                    lesson_copy['practice_count'] = 0
+
+            lessons_dict[lesson_copy['lesson']] = lesson_copy
+
     message_count_increment = 0
     last_message_timedate = None
     last_practice_timedate = None
-    
-    # Get existing timestamps from MongoDB to check for duplicates
-    existing_last_message = None
-    existing_last_practice = None
-    
-    if existing_doc:
-        if existing_doc.get('last_message_timedate'):
-            existing_last_message = parse_timestamp(existing_doc['last_message_timedate']) if isinstance(existing_doc['last_message_timedate'], str) else existing_doc['last_message_timedate']
-        if existing_doc.get('last_practice_timedate'):
-            existing_last_practice = parse_timestamp(existing_doc['last_practice_timedate']) if isinstance(existing_doc['last_practice_timedate'], str) else existing_doc['last_practice_timedate']
-    
-    # Get existing lessons or initialize empty
-    existing_lessons = existing_doc.get('lessons', []) if existing_doc else []
-    lessons_dict = {}
-    for lesson in existing_lessons:
-        lesson_copy = lesson.copy()
-        # Parse timestamp strings to datetime objects for comparison
-        if 'first_practice' in lesson_copy and isinstance(lesson_copy['first_practice'], str):
-            lesson_copy['first_practice'] = parse_timestamp(lesson_copy['first_practice'])
-        if 'last_practice' in lesson_copy and isinstance(lesson_copy['last_practice'], str):
-            lesson_copy['last_practice'] = parse_timestamp(lesson_copy['last_practice'])
-        lessons_dict[lesson['lesson']] = lesson_copy
-    
-    # Process each message
+
+    # PROCESS INPUT MESSAGES
     for msg in student_messages:
         msg_type = msg['message_type']
-        current_timestamp_str = msg['current_timestamp']
-        current_timestamp = parse_timestamp(current_timestamp_str)
+        ts = parse_timestamp(msg['current_timestamp'])
         msg_lesson = msg['lesson']
         msg_teacher = msg['teacher']
-        
+
         if msg_type == 'message':
-            # Check if this is a duplicate message (same or older timestamp)
-            if existing_last_message and current_timestamp <= existing_last_message:
-                print(f"  ⚠ Skipping duplicate message for {name} - timestamp {current_timestamp} <= existing {existing_last_message}")
+            if existing_last_message and ts <= existing_last_message:
                 continue
-            
-            # Check against messages already processed in this batch
-            if last_message_timedate and current_timestamp <= last_message_timedate:
-                print(f"  ⚠ Skipping duplicate message in batch for {name}")
+
+            if last_message_timedate and ts <= last_message_timedate:
                 continue
-            
-            # Increment message counter
+
             message_count_increment += 1
-            
-            # Update last_message_timedate to the most recent
-            if last_message_timedate is None or current_timestamp > last_message_timedate:
-                last_message_timedate = current_timestamp
-        
+            if not last_message_timedate or ts > last_message_timedate:
+                last_message_timedate = ts
+
         elif msg_type == 'practice':
-            # Check if this is a duplicate practice (same or older timestamp)
-            if existing_last_practice and current_timestamp <= existing_last_practice:
-                print(f"  ⚠ Skipping duplicate practice for {name} - timestamp {current_timestamp} <= existing {existing_last_practice}")
+            if existing_last_practice and ts <= existing_last_practice:
                 continue
-            
-            # Check against practices already processed in this batch
-            if last_practice_timedate and current_timestamp <= last_practice_timedate:
-                print(f"  ⚠ Skipping duplicate practice in batch for {name}")
+
+            if last_practice_timedate and ts <= last_practice_timedate:
                 continue
-            
-            # Check if this lesson already exists
+
             if msg_lesson in lessons_dict:
-                # Update existing lesson
                 lesson_entry = lessons_dict[msg_lesson]
-                
-                # Only update if this practice is newer than the last one for this lesson
-                if current_timestamp > lesson_entry['last_practice']:
-                    lesson_entry['practice_count'] += 1
+
+                if ts > lesson_entry.get('last_practice', datetime.min):
+                    lesson_entry['practice_count'] = lesson_entry.get('practice_count', 0) + 1
                     lesson_entry['teacher'] = msg_teacher
-                    lesson_entry['last_practice'] = current_timestamp
-                    
-                    # Update the global last_practice_timedate
-                    if last_practice_timedate is None or current_timestamp > last_practice_timedate:
-                        last_practice_timedate = current_timestamp
+                    lesson_entry['last_practice'] = ts
+
+                    if not lesson_entry.get('first_practice'):
+                        lesson_entry['first_practice'] = ts
+
+                    if not last_practice_timedate or ts > last_practice_timedate:
+                        last_practice_timedate = ts
                 else:
-                    print(f"  ⚠ Skipping duplicate practice for {name} lesson {msg_lesson} - already processed")
                     continue
             else:
-                # Create new lesson entry
-                new_lesson = {
+                lessons_dict[msg_lesson] = {
                     'lesson': msg_lesson,
                     'teacher': msg_teacher,
                     'practice_count': 1,
-                    'first_practice': current_timestamp,
-                    'last_practice': current_timestamp
+                    'first_practice': ts,
+                    'last_practice': ts
                 }
-                lessons_dict[msg_lesson] = new_lesson
-                
-                # Update the global last_practice_timedate for new lessons
-                if last_practice_timedate is None or current_timestamp > last_practice_timedate:
-                    last_practice_timedate = current_timestamp
-    
-    # Convert lessons_dict back to list
-    lessons_list = list(lessons_dict.values())
-    
-    # Handle increments and updates
-    set_operations = {}
-    inc_operations = {}
-    
-    if message_count_increment > 0:
-        inc_operations['total_messages'] = message_count_increment
-    
-    # Convert datetime objects back to strings for MongoDB storage
-    if last_message_timedate:
-        set_operations['last_message_timedate'] = last_message_timedate.strftime('%H:%M, %d.%m.%Y')
-    
-    if last_practice_timedate:
-        set_operations['last_practice_timedate'] = last_practice_timedate.strftime('%H:%M, %d.%m.%Y')
-    
-    # Convert lesson timestamps back to strings
+
+                if not last_practice_timedate or ts > last_practice_timedate:
+                    last_practice_timedate = ts
+
+    # AUTO-ADD CURRENT LESSON
+    if current_lesson not in lessons_dict:
+        lessons_dict[current_lesson] = {
+            'lesson': current_lesson,
+            'teacher': first_msg['teacher'],
+            'practice_count': 0,
+            'first_practice': None,
+            'last_practice': None
+        }
+
+    # SORT LESSONS
+    def extract_number(lesson_name):
+        try:
+            return int(''.join(filter(str.isdigit, lesson_name)))
+        except:
+            return 9999
+
+    lessons_list = sorted(lessons_dict.values(), key=lambda x: extract_number(x['lesson']))
+
+    # --- CLEAN LESSONS BEFORE SAVING (convert datetimes to strings) ---
     for lesson in lessons_list:
-        if 'first_practice' in lesson and isinstance(lesson['first_practice'], datetime):
-            lesson['first_practice'] = lesson['first_practice'].strftime('%H:%M, %d.%m.%Y')
-        if 'last_practice' in lesson and isinstance(lesson['last_practice'], datetime):
-            lesson['last_practice'] = lesson['last_practice'].strftime('%H:%M, %d.%m.%Y')
-    
-    # Always update lessons array
-    set_operations['lessons'] = lessons_list
-    
-    # Add other fields to set
-    set_operations.update({
+        for key in ['first_practice', 'last_practice']:
+            if isinstance(lesson.get(key), datetime):
+                lesson[key] = format_timestamp(lesson[key])
+
+    # PREPARE SETS FOR MONGO
+    set_ops = {
         'phone_number': phone_number,
         'name': name,
         'current_lesson': current_lesson,
-        'updated_at': datetime.now()
-    })
-    
-    # If new document, set created_at and initialize total_messages
+        'lessons': lessons_list,
+        'updated_at': datetime.now(),
+    }
+
+    inc_ops = {}
+
+    if message_count_increment > 0:
+        inc_ops['total_messages'] = message_count_increment
+
+    if last_message_timedate:
+        set_ops['last_message_timedate'] = format_timestamp(last_message_timedate)
+
+    if last_practice_timedate:
+        set_ops['last_practice_timedate'] = format_timestamp(last_practice_timedate)
+
     if not existing_doc:
-        set_operations['created_at'] = datetime.now()
-        set_operations['total_messages'] = message_count_increment
-        inc_operations = {}  # Don't increment on new docs, just set
-    
+        set_ops['created_at'] = datetime.now()
+        set_ops['total_messages'] = message_count_increment
+        inc_ops = {}
+
+    update_doc = {'$set': set_ops}
+    if inc_ops:
+        update_doc['$inc'] = inc_ops
+
     return {
         'filter': {'uniq_id': uniq_id},
-        'update': {
-            '$set': set_operations,
-            **({'$inc': inc_operations} if inc_operations else {})
-        },
+        'update': update_doc,
         'upsert': True,
-        'is_new': not existing_doc  # Track if this is a new document
+        'is_new': not existing_doc
     }
+
 
 
 def load(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:
