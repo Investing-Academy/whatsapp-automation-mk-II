@@ -15,7 +15,7 @@ def run_etl():
         run_students_etl(students_messages)
 
     #if len(sales_messages) == 0:
-        print("=" * 60 + "\n" + "failed to read sales messages" + "\n" + "=" * 60 )
-        return
+    #    print("=" * 60 + "\n" + "failed to read sales messages" + "\n" + "=" * 60 )
+    #    return
     #else:
-        run_sales_etl(sales_messages)
+    #    run_sales_etl(sales_messages)
