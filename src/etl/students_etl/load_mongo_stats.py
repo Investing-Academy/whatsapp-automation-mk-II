@@ -60,11 +60,21 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
     """
     Process all messages for a single student and build MongoDB update operations.
     Clean, predictable, auto-advancing lessons, duplicate-safe.
+
+    Returns dict with:
+    - filter, update, upsert, is_new: MongoDB operation details
+    - new_lesson_created: Dict with lesson info if new lesson was created, None otherwise
     """
     first_msg = student_messages[0]
     phone_number = first_msg['phone_number']
     name = first_msg['name']
     current_lesson = first_msg['lesson']
+
+    # Skip students with empty lesson numbers
+    if not current_lesson or current_lesson.strip() == '':
+        print(f"⚠ Skipping {name} ({phone_number}) - empty lesson number in Google Sheets")
+        return None
+
     uniq_id = generate_uniq_id(phone_number, name)
 
     # Fetch existing student
@@ -132,12 +142,101 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
     last_message_timedate = None
     last_practice_timedate = None
 
-    # PROCESS INPUT MESSAGES
+    # Track if a new lesson was created in this run
+    new_lesson_created = None
+
+    # Determine the target lesson to update
+    # The sheet's current_lesson is the source of truth
+    # Compare with the last lesson in MongoDB to detect progression
+
+    target_lesson = None
+    target_teacher = current_lesson  # From sheet column C
+    sheet_teacher = first_msg['teacher']  # From sheet column E
+
+    if lessons_dict:
+        # Find the last lesson in MongoDB (highest lesson number)
+        try:
+            last_mongo_lesson = max(lessons_dict.keys(), key=lambda x: int(x) if x.isdigit() else 0)
+            last_mongo_teacher = lessons_dict[last_mongo_lesson].get('teacher', '')
+
+            # Check if student progressed to a new lesson
+            if current_lesson != last_mongo_lesson:
+                # Student progressed! Create new lesson
+                print(f"  → Student progressed from lesson {last_mongo_lesson} to {current_lesson}")
+                target_lesson = current_lesson
+                # Create new lesson entry
+                lesson_created_timestamp = MongoDBConnection.get_current_timestamp()
+                lessons_dict[current_lesson] = {
+                    'lesson': current_lesson,
+                    'teacher': sheet_teacher,
+                    'practice_count': 0,
+                    'message_count': 0,
+                    'first_practice': None,
+                    'last_practice': None,
+                    'paid': False
+                }
+                # Track new lesson creation for teachers sheet sync
+                new_lesson_created = {
+                    'phone_number': phone_number,
+                    'name': name,
+                    'lesson': current_lesson,
+                    'teacher': sheet_teacher,
+                    'created_timestamp': lesson_created_timestamp
+                }
+            else:
+                # Same lesson - update existing
+                target_lesson = last_mongo_lesson
+                # Update teacher if it changed in the sheet
+                if sheet_teacher != last_mongo_teacher:
+                    lessons_dict[target_lesson]['teacher'] = sheet_teacher
+        except (ValueError, AttributeError):
+            # Fallback if lesson numbers aren't pure digits
+            target_lesson = current_lesson
+            if current_lesson not in lessons_dict:
+                lesson_created_timestamp = MongoDBConnection.get_current_timestamp()
+                lessons_dict[current_lesson] = {
+                    'lesson': current_lesson,
+                    'teacher': sheet_teacher,
+                    'practice_count': 0,
+                    'message_count': 0,
+                    'first_practice': None,
+                    'last_practice': None,
+                    'paid': False
+                }
+                # Track new lesson creation for teachers sheet sync
+                new_lesson_created = {
+                    'phone_number': phone_number,
+                    'name': name,
+                    'lesson': current_lesson,
+                    'teacher': sheet_teacher,
+                    'created_timestamp': lesson_created_timestamp
+                }
+    else:
+        # No lessons exist - create first lesson
+        target_lesson = current_lesson
+        lesson_created_timestamp = MongoDBConnection.get_current_timestamp()
+        lessons_dict[current_lesson] = {
+            'lesson': current_lesson,
+            'teacher': sheet_teacher,
+            'practice_count': 0,
+            'message_count': 0,
+            'first_practice': None,
+            'last_practice': None,
+            'paid': False
+        }
+        # Track new lesson creation for teachers sheet sync
+        new_lesson_created = {
+            'phone_number': phone_number,
+            'name': name,
+            'lesson': current_lesson,
+            'teacher': sheet_teacher,
+            'created_timestamp': lesson_created_timestamp
+        }
+
+    # PROCESS INPUT MESSAGES - All updates go to target_lesson
     for msg in student_messages:
         msg_type = msg['message_type']
         ts = parse_timestamp(msg['current_timestamp'])
-        msg_lesson = msg['lesson']
-        msg_teacher = msg['teacher']
 
         if msg_type == 'message':
             if existing_last_message and ts <= existing_last_message:
@@ -146,21 +245,9 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
             if last_message_timedate and ts <= last_message_timedate:
                 continue
 
-            # Increment message count at lesson level
-            if msg_lesson in lessons_dict:
-                lesson_entry = lessons_dict[msg_lesson]
-                lesson_entry['message_count'] = lesson_entry.get('message_count', 0) + 1
-            else:
-                # Create lesson entry if it doesn't exist
-                lessons_dict[msg_lesson] = {
-                    'lesson': msg_lesson,
-                    'teacher': msg_teacher,
-                    'practice_count': 0,
-                    'message_count': 1,
-                    'first_practice': None,
-                    'last_practice': None,
-                    'paid': False
-                }
+            # Update message count in target lesson
+            lesson_entry = lessons_dict[target_lesson]
+            lesson_entry['message_count'] = lesson_entry.get('message_count', 0) + 1
 
             if not last_message_timedate or ts > last_message_timedate:
                 last_message_timedate = ts
@@ -172,46 +259,21 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
             if last_practice_timedate and ts <= last_practice_timedate:
                 continue
 
-            if msg_lesson in lessons_dict:
-                lesson_entry = lessons_dict[msg_lesson]
+            lesson_entry = lessons_dict[target_lesson]
 
-                if ts > lesson_entry.get('last_practice', datetime.min):
-                    lesson_entry['practice_count'] = lesson_entry.get('practice_count', 0) + 1
-                    lesson_entry['teacher'] = msg_teacher
-                    lesson_entry['last_practice'] = ts
+            # Handle None values for last_practice (backward compatibility)
+            existing_last_practice_ts = lesson_entry.get('last_practice')
+            if existing_last_practice_ts is None or ts > existing_last_practice_ts:
+                lesson_entry['practice_count'] = lesson_entry.get('practice_count', 0) + 1
+                lesson_entry['last_practice'] = ts
 
-                    if not lesson_entry.get('first_practice'):
-                        lesson_entry['first_practice'] = ts
-
-                    if not last_practice_timedate or ts > last_practice_timedate:
-                        last_practice_timedate = ts
-                else:
-                    continue
-            else:
-                lessons_dict[msg_lesson] = {
-                    'lesson': msg_lesson,
-                    'teacher': msg_teacher,
-                    'practice_count': 1,
-                    'message_count': 0,
-                    'first_practice': ts,
-                    'last_practice': ts,
-                    'paid': False
-                }
+                if not lesson_entry.get('first_practice'):
+                    lesson_entry['first_practice'] = ts
 
                 if not last_practice_timedate or ts > last_practice_timedate:
                     last_practice_timedate = ts
-
-    # AUTO-ADD CURRENT LESSON
-    if current_lesson not in lessons_dict:
-        lessons_dict[current_lesson] = {
-            'lesson': current_lesson,
-            'teacher': first_msg['teacher'],
-            'practice_count': 0,
-            'message_count': 0,
-            'first_practice': None,
-            'last_practice': None,
-            'paid': False
-        }
+            else:
+                continue
 
     # SORT LESSONS
     def extract_number(lesson_name):
@@ -255,7 +317,8 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
         'filter': {'uniq_id': uniq_id},
         'update': update_doc,
         'upsert': True,
-        'is_new': not existing_doc
+        'is_new': not existing_doc,
+        'new_lesson_created': new_lesson_created  # None if no new lesson, dict if new lesson created
     }
 
 
@@ -263,6 +326,10 @@ def process_student_messages(student_messages: List[Dict[str, Any]], stats_colle
 def load(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     Load transformed records into MongoDB student_stats collection.
+
+    Returns dict with:
+    - students_processed, new_students, updated_students, etc.
+    - new_lessons_created: List of dicts with info about newly created lessons
     """
     if not transformed_records:
         print("No records to load")
@@ -272,22 +339,23 @@ def load(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:
             'updated_students': 0,
             'messages_loaded': 0,
             'practices_loaded': 0,
-            'errors': 0
+            'errors': 0,
+            'new_lessons_created': []
         }
-    
+
     print(f"\n{'='*60}")
     print(f"Starting load for {len(transformed_records)} records")
     print(f"{'='*60}")
-    
+
     # Get MongoDB connection
     mongo_conn = get_mongo_connection()
     stats_collection = mongo_conn.get_students_stats_collection()
-    
+
     # Aggregate messages by student
     student_messages_map = aggregate_student_updates(transformed_records)
-    
+
     print(f"Processing {len(student_messages_map)} students")
-    
+
     # Statistics
     stats = {
         'students_processed': 0,
@@ -295,7 +363,8 @@ def load(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:
         'updated_students': 0,
         'messages_loaded': 0,
         'practices_loaded': 0,
-        'errors': 0
+        'errors': 0,
+        'new_lessons_created': []  # Track all new lessons for teachers sheet sync
     }
     
     # Process each student
@@ -304,33 +373,41 @@ def load(transformed_records: List[Dict[str, Any]]) -> Dict[str, Any]:
             # Count message types
             message_count = sum(1 for msg in student_messages if msg['message_type'] == 'message')
             practice_count = sum(1 for msg in student_messages if msg['message_type'] == 'practice')
-            
+
             # Process all messages for this student
             update_operation = process_student_messages(student_messages, stats_collection)
-            
+
+            # Skip if student was filtered out (e.g., empty lesson number)
+            if update_operation is None:
+                continue
+
+            # Track new lesson creation for teachers sheet sync
+            if update_operation['new_lesson_created'] is not None:
+                stats['new_lessons_created'].append(update_operation['new_lesson_created'])
+
             # Execute MongoDB update
             result = stats_collection.update_one(
                 update_operation['filter'],
                 update_operation['update'],
                 upsert=update_operation['upsert']
             )
-            
+
             # Update statistics
             stats['students_processed'] += 1
-            
+
             # Track new vs updated based on upserted_id presence
             if result.upserted_id or update_operation['is_new']:
                 stats['new_students'] += 1
             else:
                 stats['updated_students'] += 1
-            
+
             stats['messages_loaded'] += message_count
             stats['practices_loaded'] += practice_count
-            
+
             student_name = student_messages[0]['name']
             status = "NEW" if (result.upserted_id or update_operation['is_new']) else "UPDATED"
             print(f"✓ {status}: {student_name} ({phone_number}) - {message_count} messages, {practice_count} practices")
-            
+
         except Exception as e:
             stats['errors'] += 1
             print(f"✗ Error processing {phone_number}: {e}")
