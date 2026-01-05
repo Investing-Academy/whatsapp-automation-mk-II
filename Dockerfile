@@ -1,10 +1,14 @@
 FROM selenium/standalone-chrome:latest
 
+# Metadata
+LABEL maintainer="ETL Pipeline"
+LABEL description="WhatsApp ETL with Selenium and MongoDB"
+
 WORKDIR /app
 
 USER root
 
-# Install Python and pip
+# Install Python and essential tools
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -19,45 +23,51 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Upgrade pip in the venv
 RUN /opt/venv/bin/python -m pip install --upgrade pip
 
-# Copy requirements and install
+# Copy and install Python dependencies
 COPY requirements.txt .
 RUN /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
 
-# Copy application code (including .env)
+# Copy application code
 COPY . .
 
-# Create logs directory
-RUN mkdir -p /app/logs && chown -R seluser:seluser /app
+# Create necessary directories
+RUN mkdir -p /app/logs /app/whatsapp_session && \
+    chown -R seluser:seluser /app
 
-# Create startup script
-RUN echo '#!/bin/bash\n\
-# Start Selenium in background\n\
-/opt/bin/entry_point.sh &\n\
-\n\
-# Wait for Selenium to be ready\n\
-echo "Waiting for Selenium to start..."\n\
-for i in {1..30}; do\n\
-  if curl -s http://localhost:4444/wd/hub/status > /dev/null 2>&1; then\n\
-    echo "Selenium is ready!"\n\
-    break\n\
-  fi\n\
-  echo "Still waiting... ($i/30)"\n\
-  sleep 2\n\
-done\n\
-\n\
-# Run the Python script\n\
-cd /app\n\
-/opt/venv/bin/python main.py\n\
-\n\
-# Keep container running to allow manual interaction if needed\n\
-wait' > /app/start.sh && chmod +x /app/start.sh
+# Environment variables with defaults
+ENV ETL_INTERVAL=7200
+ENV PYTHONUNBUFFERED=1
 
-# Switch back to seluser
+# Health check - verify both Selenium and MongoDB connectivity
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:4444/wd/hub/status || exit 1
+
+# Switch to non-root user
 USER seluser
 
-# Expose VNC ports (Selenium image has built-in VNC)
+# Expose ports
 EXPOSE 4444 5900 7900
 
-CMD ["/app/start.sh"]
-
-#docker run -it --rm --shm-size=2g -p 4444:4444 -p 5900:5900 -p 7900:7900 etlsssz
+# Use Python scheduler instead of bash loop
+CMD ["/bin/bash", "-c", "\
+    set -e && \
+    echo 'Starting Selenium Grid...' && \
+    /opt/bin/entry_point.sh & \
+    echo 'Waiting for Selenium to be ready...' && \
+    timeout=30 && \
+    count=0 && \
+    while [ $count -lt $timeout ]; do \
+        if curl -s http://localhost:4444/wd/hub/status > /dev/null 2>&1; then \
+            echo 'Selenium is ready!' && \
+            break; \
+        fi; \
+        count=$((count + 1)); \
+        echo \"Waiting... ($count/$timeout)\"; \
+        sleep 2; \
+    done && \
+    if [ $count -eq $timeout ]; then \
+        echo 'ERROR: Selenium failed to start' && \
+        exit 1; \
+    fi && \
+    echo 'Starting ETL Scheduler...' && \
+    exec /opt/venv/bin/python scheduler.py --interval $ETL_INTERVAL"]
