@@ -19,6 +19,7 @@ MONGO_PASSWORD = os.getenv("MONGO_PASSWORD")
 # Students database configuration
 STUDENTS_DB = os.getenv("STUDENTS_DB")
 STUDENTS_STATS = os.getenv("STUDENTS_STATS")
+TEACHER_PAYMENTS = os.getenv("TEACHER_PAYMENTS", "teacher_payments")  # Default value if not in .env
 
 # Sales database configuration
 SALES_DB = os.getenv("SALES_DB")
@@ -174,28 +175,33 @@ class MongoDBConnection:
         Setup collections and create indexes
         Only creates these specific collections:
         - students_db.student_stats
+        - students_db.teacher_payments
         - sales_db.last_run_timestamp
         - logger_db.logger_stats
         """
         try:
             print(f"Setting up collections...")
-            
+
             # Get collection references (exact names from .env)
             students_stats_collection = self._students_db[STUDENTS_STATS]
+            teacher_payments_collection = self._students_db[TEACHER_PAYMENTS]
             sales_last_run_collection = self._sales_db[SALES_LAST_RUN_COLLECTION]
             logger_stats_collection = self._logger_db[LOGGER_STATS]
-            
+
             # Create indexes for student_stats collection
             self._create_student_stats_indexes(students_stats_collection, STUDENTS_STATS)
-            
+
+            # Create indexes for teacher_payments collection
+            self._create_teacher_payments_indexes(teacher_payments_collection, TEACHER_PAYMENTS)
+
             # Create indexes for sales last_run_timestamp collection
             self._create_last_run_indexes(sales_last_run_collection, SALES_LAST_RUN_COLLECTION)
-            
+
             # Create indexes for logger_stats collection
             self._create_logger_stats_indexes(logger_stats_collection, LOGGER_STATS)
-            
+
             print(f"✓ Collections and indexes setup complete")
-            
+
         except Exception as e:
             print(f"Warning: Could not setup collections: {e}")
     
@@ -239,17 +245,59 @@ class MongoDBConnection:
         except Exception as e:
             print(f"   ⚠ Could not create indexes for {collection_name}: {e}")
     
+    def _create_teacher_payments_indexes(self, collection, collection_name):
+        """
+        Create indexes for teacher_payments collection
+
+        Schema:
+        - payment_id: unique MD5 hash of phone_number + lesson
+        - phone_number: student's phone number
+        - name: student's name
+        - lesson: lesson number (string)
+        - teacher: teacher name
+        - paid: payment status (boolean)
+        - date_added: timestamp when lesson was created
+        - created_at: timestamp when record was added to collection
+        - updated_at: timestamp of last update
+        """
+        try:
+            # Unique index on payment_id for deduplication
+            collection.create_index([("payment_id", ASCENDING)], unique=True, name="payment_id_idx")
+
+            # Index on phone_number for lookups
+            collection.create_index([("phone_number", ASCENDING)], name="phone_number_idx")
+
+            # Index on teacher for payment queries
+            collection.create_index([("teacher", ASCENDING)], name="teacher_idx")
+
+            # Index on paid status for filtering unpaid lessons
+            collection.create_index([("paid", ASCENDING)], name="paid_idx")
+
+            # Compound index for teacher + paid queries (e.g., unpaid lessons for specific teacher)
+            collection.create_index([
+                ("teacher", ASCENDING),
+                ("paid", ASCENDING)
+            ], name="teacher_paid_idx")
+
+            # Index on date_added for chronological queries
+            collection.create_index([("date_added", ASCENDING)], name="date_added_idx")
+
+            print(f"   ✓ Created indexes for {collection_name} (teacher payments)")
+
+        except Exception as e:
+            print(f"   ⚠ Could not create indexes for {collection_name}: {e}")
+
     def _create_last_run_indexes(self, collection, collection_name):
         """Create indexes for last_run_timestamp collection"""
         try:
             # Index on identifier (job name or process name)
             collection.create_index([("identifier", ASCENDING)], name="identifier_idx", unique=True)
-            
+
             # Index on last_run_timestamp
             collection.create_index([("last_run_timestamp", ASCENDING)], name="last_run_timestamp_idx")
-            
+
             print(f"   ✓ Created indexes for {collection_name} (tracking)")
-            
+
         except Exception as e:
             print(f"   ⚠ Could not create indexes for {collection_name}: {e}")
     
@@ -314,11 +362,15 @@ class MongoDBConnection:
     def get_students_stats_collection(self):
         """Get student_stats collection from students_db"""
         return self.get_students_database()[STUDENTS_STATS]
-    
+
+    def get_teacher_payments_collection(self):
+        """Get teacher_payments collection from students_db"""
+        return self.get_students_database()[TEACHER_PAYMENTS]
+
     def get_sales_last_run_collection(self):
         """Get last_run_timestamp collection from sales_db"""
         return self.get_sales_database()[SALES_LAST_RUN_COLLECTION]
-    
+
     def get_logger_stats_collection(self):
         """Get logger_stats collection from logger_db"""
         return self.get_logger_database()[LOGGER_STATS]

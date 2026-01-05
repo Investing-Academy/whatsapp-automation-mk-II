@@ -45,6 +45,7 @@ def contains_keyword(text: str, keywords: List[str]) -> bool:
 
 def determine_message_type(text: str) -> Optional[str]:
     """Determine message type based on keyword match."""
+    # Check practice keywords first (higher priority)
     if contains_keyword(text, PRACTICE_WORDS):
         return 'practice'
     elif contains_keyword(text, MESSAGE_WORDS):
@@ -54,17 +55,17 @@ def determine_message_type(text: str) -> Optional[str]:
 
 def get_students_from_sheets() -> Dict[str, Dict[str, str]]:
     """
-    Fetch student data from Google Sheets (main worksheet).
+    Fetch student data from Google Sheets (Students worksheet).
     Returns a dictionary with phone as key for fast lookup.
     """
     client = init_google_sheets()
-    
+
     if not client:
         print("Failed to initialize Google Sheets client")
         return {}
-    
+
     try:
-        SHEET_NAME = 'main'
+        SHEET_NAME = 'Students'
         
         # Open the spreadsheet and get the worksheet
         spreadsheet = client.open_by_key(SHEET_ID)
@@ -92,26 +93,10 @@ def get_students_from_sheets() -> Dict[str, Dict[str, str]]:
             
             # Normalize phone number
             phone = normalize_phone_number(phone)
-            
-            # Extract lesson number from "שיעור num" format
-            # Handle cases like "שיעור 12שיעור 12שיעור 9" - take only the first occurrence
-            lesson_raw = row[2].strip() if len(row) > 2 and row[2] else ''
-            
-            # Find the first occurrence of "שיעור" and extract the number after it
-            if 'שיעור' in lesson_raw:
-                # Split by 'שיעור' and get the second part (first number)
-                parts = lesson_raw.split('שיעור')
-                # Get the first non-empty part after 'שיעור'
-                for part in parts[1:]:
-                    # Extract only digits from the beginning of the part
-                    lesson_number = ''.join(c for c in part if c.isdigit())
-                    if lesson_number:
-                        break
-                else:
-                    lesson_number = ''
-            else:
-                lesson_number = ''
-            
+
+            # Get lesson number (already clean - contains only digits)
+            lesson_number = row[2].strip() if len(row) > 2 and row[2] else ''
+
             students_dict[phone] = {
                 'name': row[1].strip() if len(row) > 1 and row[1] else '',
                 'lesson': lesson_number,
@@ -255,8 +240,21 @@ def transform(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             transformed_record['last_practice'] = last_timestamp
         
         transformed_records.append(transformed_record)
-        
-        print(f"✓ Transformed: {student_info['name']} ({phone_number}) - Type: {message_type}")
+
+        # Find which keyword matched for debugging
+        matched_keyword = "unknown"
+        if message_type == 'practice':
+            for keyword in PRACTICE_WORDS:
+                if keyword in text:
+                    matched_keyword = keyword
+                    break
+        elif message_type == 'message':
+            for keyword in MESSAGE_WORDS:
+                if keyword in text:
+                    matched_keyword = keyword
+                    break
+
+        print(f"✓ Transformed: {student_info['name']} ({phone_number}) - Type: {message_type} (matched: '{matched_keyword}')")
     
     print(f"\n{'='*60}")
     print(f"Transform complete: {len(transformed_records)} records")
