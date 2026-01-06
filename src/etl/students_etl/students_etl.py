@@ -3,6 +3,7 @@ from src.etl.students_etl.load_mongo_stats import load
 from src.etl.students_etl.load_sheets_updates import update_practice_dates
 from src.etl.students_etl.calculate_performance import calculate_all_student_performance
 from src.etl.students_etl.load_teachers_sheet import sync_new_lessons_to_teachers_sheet
+from src.etl.students_etl.load_helper_stats import update_helper_sheet_stats, update_teacher_stats
 
 def run_students_etl(messages):
     transformed_data = transform(messages)
@@ -21,3 +22,11 @@ def run_students_etl(messages):
     # This runs after MongoDB stats are updated and processes all students,
     # not just those with new messages in this batch
     calculate_all_student_performance()
+
+    # Update helper sheet with total statistics
+    # This runs after all MongoDB updates are complete
+    update_helper_sheet_stats()
+
+    # Update helper sheet with teacher statistics
+    # This runs after all MongoDB updates are complete
+    update_teacher_stats()
