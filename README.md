@@ -68,34 +68,74 @@ WhatsApp Groups
 ## 🚀 Getting Started
 
 ### Prerequisites
-```bash
-# Add your prerequisites here
 - Python 3.x
 - MongoDB instance
 - Google Sheets API credentials
-- WhatsApp access
+- WhatsApp account
+- Docker (for containerized deployment)
+
+### Deployment Options
+
+#### Option 1: Docker (Recommended)
+
+**For Mac (M1/M2/M3 or Intel):**
+```bash
+# Quick start
+cp .env.exemple .env
+# Edit .env with your credentials
+
+mkdir -p whatsapp_session secrets logs
+cp /path/to/credentials.json secrets/
+
+# Build and run
+docker-compose -f docker-compose.mac.yml build
+docker-compose -f docker-compose.mac.yml up -d
 ```
 
-### Installation
+See [DOCKER_MAC_QUICKSTART.md](DOCKER_MAC_QUICKSTART.md) for complete Mac deployment guide.
+
+**For Linux:**
+```bash
+# Use original Dockerfile
+docker-compose up -d
+```
+
+#### Option 2: Local Development
 ```bash
 # Clone the repository
 git clone <your-repo-url>
-cd <repo-name>
+cd mk2
 
 # Install dependencies
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 
 # Configure environment variables
-cp .env.example .env
+cp .env.exemple .env
 # Edit .env with your credentials
+
+# Run directly
+python main.py
+
+# Or with scheduler
+python scheduler.py --interval 3600
 ```
 
 ### Configuration
 Set up the following in your `.env` file:
-- WhatsApp group identifiers
-- Google Sheets API credentials
-- MongoDB connection string
-- Dashboard URL
+- `STUDENTS_GROUP` - WhatsApp student group name
+- `SALES_TEAM_GROUP` - WhatsApp sales group name
+- `SHEET_ID` - Google Sheets ID for student data
+- `CREDENTIALS_FILE` - Path to Google API credentials
+- `MESSAGE_COUNT` - Number of messages to read per run (default: 50)
+- `ETL_INTERVAL` - Seconds between ETL runs (default: 7200)
+
+### Documentation
+- **[claude.md](claude.md)** - Complete codebase documentation
+- **[MAC_DEPLOYMENT.md](MAC_DEPLOYMENT.md)** - Mac deployment guide
+- **[DOCKER_MAC_QUICKSTART.md](DOCKER_MAC_QUICKSTART.md)** - Quick reference for Mac
+- **[MAC_DOCKER_CHANGES.md](MAC_DOCKER_CHANGES.md)** - Technical details of Mac compatibility
 
 ## 📈 Use Cases
 
