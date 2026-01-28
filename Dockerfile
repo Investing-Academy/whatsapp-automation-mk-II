@@ -1,4 +1,4 @@
-FROM selenium/standalone-chrome:latest
+FROM seleniarm/distributor:4.20.0
 
 # Metadata
 LABEL maintainer="ETL Pipeline"

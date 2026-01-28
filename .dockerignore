@@ -1,10 +1,30 @@
+# Python virtual environments
 .venv
 venv
-whatsapp_session
 __pycache__
+*.pyc
+*.pyo
+
+# Mounted volumes (not needed in image)
+whatsapp_session
+secrets
+logs
+
+# Development files
 stuf
 js
 .pytest_cache
 message_data_exemple.txt
+tests
+
+# IDE and docs
 .vscode
 *.md
+documents
+
+# Git
+.git
+
+# Docker
+.dockerignore
+docker-compose*

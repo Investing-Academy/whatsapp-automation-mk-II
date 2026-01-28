@@ -1,0 +1,153 @@
+FROM python:3.11-slim
+
+# Metadata
+LABEL maintainer="ETL Pipeline"
+LABEL description="WhatsApp ETL with Selenium, MongoDB and VNC - Mac Compatible"
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies including Chromium, VNC, and noVNC
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg \
+    curl \
+    xvfb \
+    chromium \
+    chromium-driver \
+    libnss3 \
+    libgbm1 \
+    libxss1 \
+    libasound2 \
+    fonts-liberation \
+    libappindicator3-1 \
+    libatk-bridge2.0-0 \
+    libatk1.0-0 \
+    libcups2 \
+    libdbus-1-3 \
+    libdrm2 \
+    libgtk-3-0 \
+    libnspr4 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    xdg-utils \
+    ca-certificates \
+    x11vnc \
+    fluxbox \
+    supervisor \
+    net-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install noVNC for web-based VNC access
+RUN wget -qO- https://github.com/novnc/noVNC/archive/v1.4.0.tar.gz | tar xz -C /opt && \
+    mv /opt/noVNC-1.4.0 /opt/novnc && \
+    ln -s /opt/novnc/vnc.html /opt/novnc/index.html
+
+# Install websockify (required by noVNC)
+RUN wget -qO- https://github.com/novnc/websockify/archive/v0.11.0.tar.gz | tar xz -C /opt && \
+    mv /opt/websockify-0.11.0 /opt/websockify
+
+# Create symlinks for Selenium to find chromium
+RUN ln -sf /usr/bin/chromium /usr/bin/google-chrome && \
+    ln -sf /usr/bin/chromedriver /usr/local/bin/chromedriver && \
+    chmod +x /usr/bin/chromedriver
+
+# Verify installation
+RUN chromium --version && chromedriver --version
+
+# Create virtual environment
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip
+RUN /opt/venv/bin/python -m pip install --upgrade pip
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/whatsapp_session && \
+    chmod -R 755 /app
+
+# Create supervisor configuration for managing multiple processes
+RUN mkdir -p /var/log/supervisor
+COPY <<EOF /etc/supervisor/conf.d/supervisord.conf
+[supervisord]
+nodaemon=true
+logfile=/var/log/supervisor/supervisord.log
+pidfile=/var/run/supervisord.pid
+loglevel=info
+
+[program:xvfb]
+command=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset
+autostart=true
+autorestart=true
+priority=10
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+
+[program:fluxbox]
+command=/bin/bash -c "sleep 2 && /usr/bin/fluxbox -display :99"
+autostart=true
+autorestart=true
+priority=20
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+environment=DISPLAY=":99"
+
+[program:x11vnc]
+command=/bin/bash -c "sleep 3 && /usr/bin/x11vnc -display :99 -forever -shared -rfbport 5900 -nopw -repeat -cursor arrow -ncache 10 -ncache_cr -xdamage -xkb -nomodtweak"
+autostart=true
+autorestart=true
+priority=30
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+
+[program:novnc]
+command=/bin/bash -c "sleep 5 && /opt/websockify/run 7900 --web /opt/novnc localhost:5900"
+autostart=true
+autorestart=true
+priority=40
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+
+[program:etl]
+command=/bin/bash -c "sleep 10 && /opt/venv/bin/python scheduler.py --interval %(ENV_ETL_INTERVAL)s"
+autostart=true
+autorestart=true
+priority=50
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+environment=DISPLAY=":99",PYTHONUNBUFFERED="1"
+EOF
+
+# Environment variables with defaults
+ENV ETL_INTERVAL=3600
+ENV PYTHONUNBUFFERED=1
+ENV DISPLAY=:99
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)" || exit 1
+
+# Expose ports
+EXPOSE 5900 7900 8080
+
+# Start supervisor to manage all services
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
